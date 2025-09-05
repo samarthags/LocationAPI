@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Per-Foot Location Tracker</title>
+  <title>Advanced Per-Foot Location Tracker</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
@@ -10,7 +10,7 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      font-family: system-ui, Roboto, Arial, sans-serif;
       display: flex;
       flex-direction: column;
       min-height: 100vh;
@@ -19,7 +19,7 @@
       padding: 12px;
     }
     header {
-      background: #f0f0f0;
+      background: #f8f8f8;
       border-bottom: 1px solid #ddd;
     }
     h1 {
@@ -29,7 +29,7 @@
     .controls {
       display: flex;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
     }
     #map {
@@ -51,11 +51,17 @@
       font: inherit;
       padding: 6px 10px;
     }
+    /* Arrow marker (using CSS rotation) */
+    .arrow-icon {
+      width: 24px;
+      height: 24px;
+      transform-origin: center;
+    }
   </style>
 </head>
 <body>
   <header>
-    <h1>Per-Foot Location Tracker</h1>
+    <h1>Advanced Per-Foot Location Tracker</h1>
     <div class="controls">
       <button id="startBtn">Start</button>
       <button id="pauseBtn" disabled>Pause</button>
@@ -89,8 +95,9 @@
         <div id="totalDistFeet" class="small">0.00 ft</div>
       </div>
       <div>
-        <strong>Points</strong>
-        <div id="pointCount" class="stat">0</div>
+        <strong>Heading</strong>
+        <div id="heading" class="stat">—</div>
+        <div id="speed" class="small">speed: —</div>
       </div>
     </div>
   </div>
@@ -117,7 +124,7 @@
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
-    let marker = null;
+    let arrowMarker = null;
     let path = L.polyline([], { color: "blue", weight: 4 }).addTo(map);
     let rawLayer = L.layerGroup().addTo(map);
 
@@ -125,7 +132,7 @@
     let watchId = null, paused = false;
     let lastPoint = null, points = [], totalDist = 0;
 
-    // UI elements
+    // UI
     const startBtn = document.getElementById("startBtn");
     const pauseBtn = document.getElementById("pauseBtn");
     const statusEl = document.getElementById("status");
@@ -135,42 +142,67 @@
     const altitudeEl = document.getElementById("altitude");
     const totalDistEl = document.getElementById("totalDist");
     const totalDistFeetEl = document.getElementById("totalDistFeet");
-    const pointCountEl = document.getElementById("pointCount");
+    const headingEl = document.getElementById("heading");
+    const speedEl = document.getElementById("speed");
     const sensitivityInput = document.getElementById("sensitivityInput");
     const showRaw = document.getElementById("showRaw");
 
-    function updateUI(p) {
+    // Custom arrow icon (SVG)
+    const arrowSVG = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="blue">
+        <path d="M12 2L19 21l-7-4-7 4z"/>
+      </svg>`;
+    const arrowIcon = L.divIcon({
+      html: arrowSVG,
+      className: "arrow-icon",
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+
+    function updateUI(p, heading, speed) {
       coordsEl.textContent = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
       timestampEl.textContent = new Date(p.timestamp).toLocaleString();
       accuracyEl.textContent = p.accuracy ? `${p.accuracy} m` : "—";
       altitudeEl.textContent = p.altitude != null ? `altitude: ${p.altitude} m` : "altitude: —";
       totalDistEl.textContent = totalDist.toFixed(2) + " m";
       totalDistFeetEl.textContent = metersToFeet(totalDist).toFixed(2) + " ft";
-      pointCountEl.textContent = points.length;
+      headingEl.textContent = heading ? heading.toFixed(0) + "°" : "—";
+      speedEl.textContent = speed ? speed.toFixed(2) + " m/s" : "—";
     }
 
-    function recordPoint(lat, lng, accuracy, altitude, ts) {
+    function recordPoint(lat, lng, accuracy, altitude, ts, heading, speed) {
       const p = { lat, lng, accuracy, altitude, timestamp: ts };
       if (lastPoint) totalDist += haversine(lastPoint.lat, lastPoint.lng, lat, lng);
       points.push(p);
       lastPoint = p;
       path.addLatLng([lat, lng]);
-      if (marker) marker.setLatLng([lat, lng]);
-      else {
-        marker = L.marker([lat, lng]).addTo(map);
+
+      if (arrowMarker) {
+        arrowMarker.setLatLng([lat, lng]);
+      } else {
+        arrowMarker = L.marker([lat, lng], { icon: arrowIcon }).addTo(map);
         map.setView([lat, lng], 18);
       }
-      updateUI(p);
+
+      // rotate arrow if heading is available
+      if (heading != null) {
+        const rotation = heading; // degrees
+        const el = arrowMarker.getElement();
+        if (el) el.style.transform = `rotate(${rotation}deg)`;
+      }
+
+      updateUI(p, heading, speed);
+      map.panTo([lat, lng]); // follow movement
     }
 
     function onUpdate(pos) {
       if (paused) return;
-      const { latitude, longitude, accuracy, altitude } = pos.coords;
+      const { latitude, longitude, accuracy, altitude, heading, speed } = pos.coords;
       const ts = pos.timestamp;
       const sensMeters = feetToMeters(parseFloat(sensitivityInput.value) || 1);
 
       if (!lastPoint) {
-        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts);
+        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts, heading, speed);
         return;
       }
       const dist = haversine(lastPoint.lat, lastPoint.lng, latitude, longitude);
@@ -179,7 +211,7 @@
         setTimeout(() => rawLayer.removeLayer(dot), 30000);
       }
       if (dist >= sensMeters) {
-        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts);
+        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts, heading, speed);
       } else {
         statusEl.textContent = `moved ${dist.toFixed(2)} m (need ${sensMeters.toFixed(2)} m)`;
       }
@@ -197,7 +229,7 @@
       totalDist = 0;
       path.setLatLngs([]);
       rawLayer.clearLayers();
-      if (marker) { map.removeLayer(marker); marker = null; }
+      if (arrowMarker) { map.removeLayer(arrowMarker); arrowMarker = null; }
       watchId = navigator.geolocation.watchPosition(onUpdate, onError, {
         enableHighAccuracy: true, maximumAge: 0, timeout: 30000
       });
