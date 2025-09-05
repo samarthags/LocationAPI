@@ -2,250 +2,122 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Advanced Per-Foot Location Tracker</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Real-Time Location Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: system-ui, Roboto, Arial, sans-serif;
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-    }
-    header, .panel, .controls {
-      padding: 12px;
-    }
-    header {
-      background: #f8f8f8;
-      border-bottom: 1px solid #ddd;
-    }
-    h1 {
-      margin: 0;
-      font-size: 1.25rem;
-    }
-    .controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-    }
-    #map {
-      flex: 1;
-      min-height: 300px;
-    }
-    .panel {
-      border-top: 1px solid #eee;
-      background: #fafafa;
-    }
-    .panel .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 12px;
-    }
-    .stat { font-family: monospace; }
-    .small { font-size: 0.9rem; color: #555; }
-    button, input {
-      font: inherit;
-      padding: 6px 10px;
-    }
-    /* Arrow marker (using CSS rotation) */
-    .arrow-icon {
-      width: 24px;
-      height: 24px;
+    body { margin:0; font-family:system-ui, sans-serif; }
+    #map { height: 100vh; width: 100%; }
+    .leaflet-marker-icon.arrow {
       transform-origin: center;
+    }
+    .place-info {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255,255,255,0.9);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-weight: bold;
+      font-size: 0.95rem;
+      max-width: 90%;
+      text-align: center;
+      z-index: 1000;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Advanced Per-Foot Location Tracker</h1>
-    <div class="controls">
-      <button id="startBtn">Start</button>
-      <button id="pauseBtn" disabled>Pause</button>
-      <label class="small">
-        Sensitivity: <input id="sensitivityInput" type="number" value="1" min="0.1" step="0.1" style="width:70px"> ft
-      </label>
-      <label class="small">
-        Show raw updates <input id="showRaw" type="checkbox">
-      </label>
-      <span id="status" class="small">idle</span>
-    </div>
-  </header>
 
-  <div id="map"></div>
+<div id="map"></div>
+<div class="place-info" id="placeName">Locating...</div>
 
-  <div class="panel">
-    <div class="grid">
-      <div>
-        <strong>Last point</strong>
-        <div id="coords" class="stat">—</div>
-        <div id="timestamp" class="small">—</div>
-      </div>
-      <div>
-        <strong>Accuracy</strong>
-        <div id="accuracy" class="stat">—</div>
-        <div id="altitude" class="small">altitude: —</div>
-      </div>
-      <div>
-        <strong>Total distance</strong>
-        <div id="totalDist" class="stat">0.00 m</div>
-        <div id="totalDistFeet" class="small">0.00 ft</div>
-      </div>
-      <div>
-        <strong>Heading</strong>
-        <div id="heading" class="stat">—</div>
-        <div id="speed" class="small">speed: —</div>
-      </div>
-    </div>
-  </div>
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
-  <script>
-    // --- Haversine distance (m) ---
-    function haversine(lat1, lon1, lat2, lon2) {
-      const R = 6371000;
-      const toRad = x => x * Math.PI / 180;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat/2)**2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
-      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-    const feetToMeters = ft => ft * 0.3048;
-    const metersToFeet = m => m / 0.3048;
+<script>
+// --- Map setup ---
+const map = L.map('map');
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
 
-    // Map
-    const map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-    let arrowMarker = null;
-    let path = L.polyline([], { color: "blue", weight: 4 }).addTo(map);
-    let rawLayer = L.layerGroup().addTo(map);
+let arrowMarker = null;
+let accuracyCircle = null;
+let headingValue = 0;
 
-    // State
-    let watchId = null, paused = false;
-    let lastPoint = null, points = [], totalDist = 0;
+// --- Custom arrow icon (SVG) ---
+const arrowIcon = L.divIcon({
+  className: "arrow",
+  html: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="dodgerblue" stroke="black" stroke-width="1">
+           <path d="M12 2 L15 11 H13 L13 22 H11 L11 11 H9z"/>
+         </svg>`,
+  iconSize: [32,32],
+  iconAnchor: [16,16]
+});
 
-    // UI
-    const startBtn = document.getElementById("startBtn");
-    const pauseBtn = document.getElementById("pauseBtn");
-    const statusEl = document.getElementById("status");
-    const coordsEl = document.getElementById("coords");
-    const timestampEl = document.getElementById("timestamp");
-    const accuracyEl = document.getElementById("accuracy");
-    const altitudeEl = document.getElementById("altitude");
-    const totalDistEl = document.getElementById("totalDist");
-    const totalDistFeetEl = document.getElementById("totalDistFeet");
-    const headingEl = document.getElementById("heading");
-    const speedEl = document.getElementById("speed");
-    const sensitivityInput = document.getElementById("sensitivityInput");
-    const showRaw = document.getElementById("showRaw");
+// --- Reverse geocoding function ---
+async function getPlaceName(lat, lon) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`;
+    const res = await fetch(url, { headers: { "User-Agent": "RealTimeTracker/1.0" } });
+    const data = await res.json();
+    return data.display_name || "Unknown place";
+  } catch (e) {
+    return "Location unavailable";
+  }
+}
 
-    // Custom arrow icon (SVG)
-    const arrowSVG = `
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="blue">
-        <path d="M12 2L19 21l-7-4-7 4z"/>
-      </svg>`;
-    const arrowIcon = L.divIcon({
-      html: arrowSVG,
-      className: "arrow-icon",
-      iconSize: [24, 24],
-      iconAnchor: [12, 12]
-    });
+// --- Update position ---
+async function updatePosition(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const accuracy = pos.coords.accuracy;
 
-    function updateUI(p, heading, speed) {
-      coordsEl.textContent = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
-      timestampEl.textContent = new Date(p.timestamp).toLocaleString();
-      accuracyEl.textContent = p.accuracy ? `${p.accuracy} m` : "—";
-      altitudeEl.textContent = p.altitude != null ? `altitude: ${p.altitude} m` : "altitude: —";
-      totalDistEl.textContent = totalDist.toFixed(2) + " m";
-      totalDistFeetEl.textContent = metersToFeet(totalDist).toFixed(2) + " ft";
-      headingEl.textContent = heading ? heading.toFixed(0) + "°" : "—";
-      speedEl.textContent = speed ? speed.toFixed(2) + " m/s" : "—";
-    }
+  // Set map view
+  map.setView([lat, lng], 17);
 
-    function recordPoint(lat, lng, accuracy, altitude, ts, heading, speed) {
-      const p = { lat, lng, accuracy, altitude, timestamp: ts };
-      if (lastPoint) totalDist += haversine(lastPoint.lat, lastPoint.lng, lat, lng);
-      points.push(p);
-      lastPoint = p;
-      path.addLatLng([lat, lng]);
+  // Add or update arrow marker
+  if (!arrowMarker) {
+    arrowMarker = L.marker([lat, lng], {icon: arrowIcon, rotationAngle: headingValue}).addTo(map);
+  } else {
+    arrowMarker.setLatLng([lat, lng]);
+    arrowMarker.getElement().style.transform = `rotate(${headingValue}deg)`;
+  }
 
-      if (arrowMarker) {
-        arrowMarker.setLatLng([lat, lng]);
-      } else {
-        arrowMarker = L.marker([lat, lng], { icon: arrowIcon }).addTo(map);
-        map.setView([lat, lng], 18);
-      }
+  // Accuracy circle
+  if (accuracyCircle) map.removeLayer(accuracyCircle);
+  accuracyCircle = L.circle([lat, lng], {radius: accuracy, color: "blue", opacity:0.3}).addTo(map);
 
-      // rotate arrow if heading is available
-      if (heading != null) {
-        const rotation = heading; // degrees
-        const el = arrowMarker.getElement();
-        if (el) el.style.transform = `rotate(${rotation}deg)`;
-      }
+  // Fetch place name
+  const place = await getPlaceName(lat, lng);
+  document.getElementById("placeName").textContent = place;
+}
 
-      updateUI(p, heading, speed);
-      map.panTo([lat, lng]); // follow movement
-    }
+// --- Geolocation ---
+if (navigator.geolocation) {
+  navigator.geolocation.watchPosition(updatePosition, 
+    err => alert("Error: " + err.message), 
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+} else {
+  alert("Geolocation not supported on this device.");
+}
 
-    function onUpdate(pos) {
-      if (paused) return;
-      const { latitude, longitude, accuracy, altitude, heading, speed } = pos.coords;
-      const ts = pos.timestamp;
-      const sensMeters = feetToMeters(parseFloat(sensitivityInput.value) || 1);
-
-      if (!lastPoint) {
-        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts, heading, speed);
-        return;
-      }
-      const dist = haversine(lastPoint.lat, lastPoint.lng, latitude, longitude);
-      if (showRaw.checked) {
-        const dot = L.circleMarker([latitude, longitude], { radius: 3, opacity: 0.5 }).addTo(rawLayer);
-        setTimeout(() => rawLayer.removeLayer(dot), 30000);
-      }
-      if (dist >= sensMeters) {
-        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts, heading, speed);
-      } else {
-        statusEl.textContent = `moved ${dist.toFixed(2)} m (need ${sensMeters.toFixed(2)} m)`;
+// --- Device orientation (for arrow rotation) ---
+if (window.DeviceOrientationEvent) {
+  window.addEventListener("deviceorientationabsolute", e => {
+    if (e.alpha != null) {
+      headingValue = 360 - e.alpha; // north=0
+      if (arrowMarker && arrowMarker.getElement()) {
+        arrowMarker.getElement().style.transform = `rotate(${headingValue}deg)`;
       }
     }
-
-    function onError(err) {
-      statusEl.textContent = "error: " + err.message;
-      alert("Geolocation error: " + err.message + "\nUse HTTPS or localhost.");
-    }
-
-    startBtn.onclick = () => {
-      if (!navigator.geolocation) return alert("Geolocation not supported.");
-      points = [];
-      lastPoint = null;
-      totalDist = 0;
-      path.setLatLngs([]);
-      rawLayer.clearLayers();
-      if (arrowMarker) { map.removeLayer(arrowMarker); arrowMarker = null; }
-      watchId = navigator.geolocation.watchPosition(onUpdate, onError, {
-        enableHighAccuracy: true, maximumAge: 0, timeout: 30000
-      });
-      startBtn.disabled = true;
-      pauseBtn.disabled = false;
-      paused = false;
-      pauseBtn.textContent = "Pause";
-      statusEl.textContent = "tracking…";
-    };
-
-    pauseBtn.onclick = () => {
-      if (!watchId) return;
-      paused = !paused;
-      pauseBtn.textContent = paused ? "Resume" : "Pause";
-      statusEl.textContent = paused ? "paused" : "tracking…";
-    };
-  </script>
+  }, true);
+}
+</script>
 </body>
 </html>
