@@ -5,260 +5,215 @@
   <title>Per-Foot Location Tracker</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-        integrity="sha256-sA+e2k5m0QKXb1Qq6Bq8fP4d2q9gC/7p1t2U3wQog0A=" crossorigin=""/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
   <style>
-    body { margin:0; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
-    #map { height: 55vh; min-height: 320px; }
-    .controls { padding: 12px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-    .panel { padding:12px; border-top:1px solid #eee; background:#fafafa; }
-    .stat { font-family:monospace; }
-    button, input, select { font:inherit; padding:8px; }
-    .small { font-size:0.9rem; color:#555; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header, .panel, .controls {
+      padding: 12px;
+    }
+    header {
+      background: #f0f0f0;
+      border-bottom: 1px solid #ddd;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+    #map {
+      flex: 1;
+      min-height: 300px;
+    }
+    .panel {
+      border-top: 1px solid #eee;
+      background: #fafafa;
+    }
+    .panel .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .stat { font-family: monospace; }
+    .small { font-size: 0.9rem; color: #555; }
+    button, input {
+      font: inherit;
+      padding: 6px 10px;
+    }
   </style>
 </head>
 <body>
-
-  <div style="padding:12px">
-    <h1 style="margin:0 0 8px 0">Per-Foot Location Tracker</h1>
+  <header>
+    <h1>Per-Foot Location Tracker</h1>
     <div class="controls">
-      <button id="startBtn">Start tracking</button>
+      <button id="startBtn">Start</button>
       <button id="pauseBtn" disabled>Pause</button>
-      <label class="small">Sensitivity:
-        <input id="sensitivityInput" type="number" value="1" min="0.1" step="0.1" style="width:70px" />
-        feet
+      <label class="small">
+        Sensitivity: <input id="sensitivityInput" type="number" value="1" min="0.1" step="0.1" style="width:70px"> ft
       </label>
-      <label class="small">Show raw updates:
-        <input id="showRaw" type="checkbox" />
+      <label class="small">
+        Show raw updates <input id="showRaw" type="checkbox">
       </label>
-      <span id="status" class="small" style="margin-left:8px">idle</span>
+      <span id="status" class="small">idle</span>
     </div>
-  </div>
+  </header>
 
   <div id="map"></div>
 
   <div class="panel">
-    <div style="display:flex; gap:24px; flex-wrap:wrap;">
+    <div class="grid">
       <div>
-        <div><strong>Last recorded point</strong></div>
-        <div class="stat" id="coords">—</div>
-        <div class="small" id="timestamp">—</div>
+        <strong>Last point</strong>
+        <div id="coords" class="stat">—</div>
+        <div id="timestamp" class="small">—</div>
       </div>
       <div>
-        <div><strong>Accuracy</strong></div>
-        <div class="stat" id="accuracy">—</div>
-        <div class="small" id="altitude">altitude: —</div>
+        <strong>Accuracy</strong>
+        <div id="accuracy" class="stat">—</div>
+        <div id="altitude" class="small">altitude: —</div>
       </div>
       <div>
-        <div><strong>Total distance</strong></div>
-        <div class="stat" id="totalDist">0.00 m</div>
-        <div class="small" id="totalDistFeet">0.00 ft</div>
+        <strong>Total distance</strong>
+        <div id="totalDist" class="stat">0.00 m</div>
+        <div id="totalDistFeet" class="small">0.00 ft</div>
       </div>
       <div>
-        <div><strong>Recorded points</strong></div>
-        <div class="stat" id="pointCount">0</div>
+        <strong>Points</strong>
+        <div id="pointCount" class="stat">0</div>
       </div>
     </div>
   </div>
 
   <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-WZC6f5kXo6gYj2Z0lD2c9k2k3GqQ0P7b5QPOs5mC0F8=" crossorigin=""></script>
-
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script>
-  // --- Helper: Haversine distance (meters) ---
-  function haversineDistance(lat1, lon1, lat2, lon2) {
-    const R = 6371000; // Earth radius meters
-    const toRad = x => x * Math.PI / 180;
-    const dLat = toRad(lat2 - lat1);
-    const dLon = toRad(lon2 - lon1);
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }
-
-  // --- Map setup ---
-  const map = L.map('map', {zoomControl:true});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
-
-  let marker = null;
-  let pathPolyline = L.polyline([], {weight:4}).addTo(map);
-  let rawPointsLayer = L.layerGroup().addTo(map);
-
-  // --- Tracking state ---
-  let watchId = null;
-  let lastRecorded = null; // {lat, lng, timestamp}
-  let points = [];
-  let totalDistance = 0; // meters
-  let paused = false;
-
-  // UI elements
-  const startBtn = document.getElementById('startBtn');
-  const pauseBtn = document.getElementById('pauseBtn');
-  const statusEl = document.getElementById('status');
-  const coordsEl = document.getElementById('coords');
-  const timestampEl = document.getElementById('timestamp');
-  const accuracyEl = document.getElementById('accuracy');
-  const altitudeEl = document.getElementById('altitude');
-  const totalDistEl = document.getElementById('totalDist');
-  const totalDistFeetEl = document.getElementById('totalDistFeet');
-  const pointCountEl = document.getElementById('pointCount');
-  const sensitivityInput = document.getElementById('sensitivityInput');
-  const showRaw = document.getElementById('showRaw');
-
-  function feetToMeters(ft) { return ft * 0.3048; }
-  function metersToFeet(m) { return m / 0.3048; }
-
-  function updateUIForNewPoint(p) {
-    coordsEl.textContent = p.lat.toFixed(6) + ', ' + p.lng.toFixed(6);
-    timestampEl.textContent = new Date(p.timestamp).toLocaleString();
-    accuracyEl.textContent = (p.accuracy != null) ? p.accuracy + ' m' : '—';
-    altitudeEl.textContent = (p.altitude != null) ? ('altitude: ' + p.altitude + ' m') : 'altitude: —';
-    totalDistEl.textContent = totalDistance.toFixed(2) + ' m';
-    totalDistFeetEl.textContent = metersToFeet(totalDistance).toFixed(2) + ' ft';
-    pointCountEl.textContent = points.length;
-  }
-
-  function recordPoint(lat, lng, accuracy=null, altitude=null, timestamp=Date.now()) {
-    const newPoint = { lat, lng, accuracy, altitude, timestamp };
-    if (lastRecorded) {
-      const d = haversineDistance(lastRecorded.lat, lastRecorded.lng, lat, lng);
-      totalDistance += d;
+    // --- Haversine distance (m) ---
+    function haversine(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const toRad = x => x * Math.PI / 180;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat/2)**2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
-    points.push(newPoint);
-    lastRecorded = newPoint;
+    const feetToMeters = ft => ft * 0.3048;
+    const metersToFeet = m => m / 0.3048;
 
-    // update map
-    pathPolyline.addLatLng([lat, lng]);
-    if (marker) {
-      marker.setLatLng([lat, lng]);
-    } else {
-      marker = L.marker([lat, lng]).addTo(map);
+    // Map
+    const map = L.map('map');
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+    let marker = null;
+    let path = L.polyline([], { color: "blue", weight: 4 }).addTo(map);
+    let rawLayer = L.layerGroup().addTo(map);
+
+    // State
+    let watchId = null, paused = false;
+    let lastPoint = null, points = [], totalDist = 0;
+
+    // UI elements
+    const startBtn = document.getElementById("startBtn");
+    const pauseBtn = document.getElementById("pauseBtn");
+    const statusEl = document.getElementById("status");
+    const coordsEl = document.getElementById("coords");
+    const timestampEl = document.getElementById("timestamp");
+    const accuracyEl = document.getElementById("accuracy");
+    const altitudeEl = document.getElementById("altitude");
+    const totalDistEl = document.getElementById("totalDist");
+    const totalDistFeetEl = document.getElementById("totalDistFeet");
+    const pointCountEl = document.getElementById("pointCount");
+    const sensitivityInput = document.getElementById("sensitivityInput");
+    const showRaw = document.getElementById("showRaw");
+
+    function updateUI(p) {
+      coordsEl.textContent = `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}`;
+      timestampEl.textContent = new Date(p.timestamp).toLocaleString();
+      accuracyEl.textContent = p.accuracy ? `${p.accuracy} m` : "—";
+      altitudeEl.textContent = p.altitude != null ? `altitude: ${p.altitude} m` : "altitude: —";
+      totalDistEl.textContent = totalDist.toFixed(2) + " m";
+      totalDistFeetEl.textContent = metersToFeet(totalDist).toFixed(2) + " ft";
+      pointCountEl.textContent = points.length;
     }
 
-    // add tiny raw marker if user wants to see raw frequent updates
-    if (showRaw.checked) {
-      const circle = L.circleMarker([lat, lng], {radius:3, opacity:0.7});
-      rawPointsLayer.addLayer(circle);
+    function recordPoint(lat, lng, accuracy, altitude, ts) {
+      const p = { lat, lng, accuracy, altitude, timestamp: ts };
+      if (lastPoint) totalDist += haversine(lastPoint.lat, lastPoint.lng, lat, lng);
+      points.push(p);
+      lastPoint = p;
+      path.addLatLng([lat, lng]);
+      if (marker) marker.setLatLng([lat, lng]);
+      else {
+        marker = L.marker([lat, lng]).addTo(map);
+        map.setView([lat, lng], 18);
+      }
+      updateUI(p);
     }
 
-    // fit map if first point
-    if (points.length === 1) {
-      map.setView([lat, lng], 18);
+    function onUpdate(pos) {
+      if (paused) return;
+      const { latitude, longitude, accuracy, altitude } = pos.coords;
+      const ts = pos.timestamp;
+      const sensMeters = feetToMeters(parseFloat(sensitivityInput.value) || 1);
+
+      if (!lastPoint) {
+        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts);
+        return;
+      }
+      const dist = haversine(lastPoint.lat, lastPoint.lng, latitude, longitude);
+      if (showRaw.checked) {
+        const dot = L.circleMarker([latitude, longitude], { radius: 3, opacity: 0.5 }).addTo(rawLayer);
+        setTimeout(() => rawLayer.removeLayer(dot), 30000);
+      }
+      if (dist >= sensMeters) {
+        recordPoint(latitude, longitude, Math.round(accuracy), altitude, ts);
+      } else {
+        statusEl.textContent = `moved ${dist.toFixed(2)} m (need ${sensMeters.toFixed(2)} m)`;
+      }
     }
 
-    updateUIForNewPoint(newPoint);
-  }
-
-  // --- Geolocation handlers ---
-  function onPositionUpdate(pos) {
-    if (paused) { return; }
-    const { latitude: lat, longitude: lng, accuracy, altitude } = pos.coords;
-    const ts = pos.timestamp || Date.now();
-
-    statusEl.textContent = 'position update';
-
-    const sensitivityFeet = parseFloat(sensitivityInput.value) || 1.0;
-    const sensitivityMeters = feetToMeters(sensitivityFeet);
-
-    // If we have no recorded point yet, record immediately
-    if (!lastRecorded) {
-      recordPoint(lat, lng, Math.round(accuracy), altitude, ts);
-      return;
+    function onError(err) {
+      statusEl.textContent = "error: " + err.message;
+      alert("Geolocation error: " + err.message + "\nUse HTTPS or localhost.");
     }
 
-    // distance from last recorded point
-    const dist = haversineDistance(lastRecorded.lat, lastRecorded.lng, lat, lng);
+    startBtn.onclick = () => {
+      if (!navigator.geolocation) return alert("Geolocation not supported.");
+      points = [];
+      lastPoint = null;
+      totalDist = 0;
+      path.setLatLngs([]);
+      rawLayer.clearLayers();
+      if (marker) { map.removeLayer(marker); marker = null; }
+      watchId = navigator.geolocation.watchPosition(onUpdate, onError, {
+        enableHighAccuracy: true, maximumAge: 0, timeout: 30000
+      });
+      startBtn.disabled = true;
+      pauseBtn.disabled = false;
+      paused = false;
+      pauseBtn.textContent = "Pause";
+      statusEl.textContent = "tracking…";
+    };
 
-    // Also show raw updates separately if user wants
-    if (showRaw.checked) {
-      // show raw as small translucent dot but don't count as a recorded point
-      const rawDot = L.circleMarker([lat, lng], {radius:3, opacity:0.5}).addTo(rawPointsLayer);
-      setTimeout(() => rawPointsLayer.removeLayer(rawDot), 30_000);
-    }
-
-    // record only when moved at least sensitivityMeters
-    if (dist >= sensitivityMeters) {
-      recordPoint(lat, lng, Math.round(accuracy), altitude, ts);
-    } else {
-      // minor update (ignored); can show in status briefly
-      statusEl.textContent = `moved ${dist.toFixed(2)} m (need ${sensitivityMeters.toFixed(2)} m)`;
-      // do not spam the UI; leave it
-    }
-  }
-
-  function onPositionError(err) {
-    console.error('Geolocation error', err);
-    statusEl.textContent = 'error: ' + err.message;
-    alert('Geolocation error: ' + err.message + '\nMake sure your device allows location and you are on HTTPS or localhost.');
-  }
-
-  function startTracking() {
-    if (!navigator.geolocation) {
-      alert('Geolocation API not supported by this browser.');
-      return;
-    }
-    // clear any old raw points
-    rawPointsLayer.clearLayers();
-
-    // high accuracy requested; frequency is determined by device.
-    watchId = navigator.geolocation.watchPosition(onPositionUpdate, onPositionError, {
-      enableHighAccuracy: true,
-      maximumAge: 0,
-      timeout: 30_000
-    });
-    startBtn.disabled = true;
-    pauseBtn.disabled = false;
-    statusEl.textContent = 'tracking… waiting for first fix';
-  }
-
-  function stopTracking() {
-    if (watchId != null) {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-    }
-    startBtn.disabled = false;
-    pauseBtn.disabled = true;
-    statusEl.textContent = 'stopped';
-  }
-
-  // --- Buttons ---
-  startBtn.addEventListener('click', () => {
-    // reset state for a fresh run
-    points = [];
-    lastRecorded = null;
-    totalDistance = 0;
-    pathPolyline.setLatLngs([]);
-    rawPointsLayer.clearLayers();
-    if (marker) { map.removeLayer(marker); marker = null; }
-    updateUIForNewPoint({lat:0,lng:0,timestamp:Date.now(),accuracy:null,altitude:null});
-    startTracking();
-  });
-
-  pauseBtn.addEventListener('click', () => {
-    if (!watchId) return;
-    paused = !paused;
-    pauseBtn.textContent = paused ? 'Resume' : 'Pause';
-    statusEl.textContent = paused ? 'paused' : 'tracking…';
-  });
-
-  sensitivityInput.addEventListener('change', () => {
-    const v = parseFloat(sensitivityInput.value);
-    if (!v || v <= 0) sensitivityInput.value = '1';
-  });
-
-  showRaw.addEventListener('change', () => {
-    rawPointsLayer.clearLayers();
-  });
-
-  // initialize UI placeholders
-  updateUIForNewPoint({lat:0,lng:0,timestamp:Date.now(),accuracy:null,altitude:null});
-  statusEl.textContent = 'idle';
+    pauseBtn.onclick = () => {
+      if (!watchId) return;
+      paused = !paused;
+      pauseBtn.textContent = paused ? "Resume" : "Pause";
+      statusEl.textContent = paused ? "paused" : "tracking…";
+    };
   </script>
 </body>
 </html>
