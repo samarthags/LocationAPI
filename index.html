@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Real-Time Location Tracker</title>
+  <title>Real-Time Path Tracker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 
   <!-- Leaflet CSS -->
@@ -49,11 +49,13 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 let arrowMarker = null;
 let accuracyCircle = null;
 let headingValue = 0;
+let pathLine = L.polyline([], {color:"dodgerblue", weight:5}).addTo(map);
 
 // --- Custom arrow icon (SVG) ---
 const arrowIcon = L.divIcon({
   className: "arrow",
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="dodgerblue" stroke="black" stroke-width="1">
+  html: `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" 
+              viewBox="0 0 24 24" fill="dodgerblue" stroke="black" stroke-width="1">
            <path d="M12 2 L15 11 H13 L13 22 H11 L11 11 H9z"/>
          </svg>`,
   iconSize: [32,32],
@@ -78,12 +80,15 @@ async function updatePosition(pos) {
   const lng = pos.coords.longitude;
   const accuracy = pos.coords.accuracy;
 
-  // Set map view
+  // Add to polyline path
+  pathLine.addLatLng([lat, lng]);
+
+  // Move map to current position
   map.setView([lat, lng], 17);
 
   // Add or update arrow marker
   if (!arrowMarker) {
-    arrowMarker = L.marker([lat, lng], {icon: arrowIcon, rotationAngle: headingValue}).addTo(map);
+    arrowMarker = L.marker([lat, lng], {icon: arrowIcon}).addTo(map);
   } else {
     arrowMarker.setLatLng([lat, lng]);
     arrowMarker.getElement().style.transform = `rotate(${headingValue}deg)`;
